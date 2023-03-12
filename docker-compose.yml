@@ -1,0 +1,38 @@
+version: "3"
+
+services:
+  db:
+    image: postgres:14.1-alpine
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${PWD}
+    ports:
+      - "5432:5432"    
+    volumes:
+      - db:/var/lib/postgresql/data
+      - ./db/titanic.csv:/tmp/titanic.csv  
+      - ./db/init.sql:/docker-entrypoint-initdb.d/create_tables.sql
+  app:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    depends_on:
+      - db
+    links:
+      - db
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: ${PWD}
+      DB_NAME: people    
+      DATABASE_URL: postgresql://postgres:${PWD}@db:5432/postgres
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./db/:/app/db/
+
+volumes:
+  db:
+    driver: local

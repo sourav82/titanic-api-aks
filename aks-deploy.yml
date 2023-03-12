@@ -1,0 +1,154 @@
+name: $(Build.DefinitionName)_$(SourceBranchName)_$(Date:yyyyMMdd)$(Rev:.r)
+
+trigger: none
+
+pool:
+  vmImage: ubuntu-latest
+
+
+variables:
+- group: titanic-demo-group
+
+#steps:
+      
+stages:
+  - stage: titanic_demo
+    jobs:
+      - job: deploy
+        continueOnError: false
+        steps:
+         - task: replacetokens@5
+           inputs:
+                targetFiles: './demo.tfvars'
+                encoding: 'auto'
+                tokenPattern: 'default'
+                writeBOM: true
+                actionOnMissing: 'warn'
+                keepToken: false
+                actionOnNoFiles: 'continue'
+                enableTransforms: false
+                enableRecursion: false
+                useLegacyPattern: false
+                enableTelemetry: true
+
+
+
+         - task: TerraformInstaller@0
+           displayName: tfinstall
+           inputs:
+              terraformVersion: 'latest'
+         - task: TerraformTaskV3@3
+           displayName: tfinit
+           inputs:
+              provider: 'azurerm'
+              command: 'init'
+              backendServiceArm: 'terraform-connection'
+              backendAzureRmResourceGroupName: '$(bkstrgrg)'
+              backendAzureRmStorageAccountName: '$(bkstrg)'
+              backendAzureRmContainerName: '$(bkcontainer)'
+              backendAzureRmKey: '$(bkstrgkey)'
+              workingDirectory: '.'
+
+#         - task: Bash@3
+#           inputs:
+#              targetType: 'inline'
+#              workingDirectory: 'AKSCluster'
+#              script: |
+#                # Write your commands here
+#                
+#                echo 'Hello world'
+#                mkdir TFSecReport
+#                docker pull aquasec/tfsec
+#                docker run --rm -v $(agent.builddirectory):/src aquasec/tfsec ./src --format JUnit --include-passed >  $(agent.builddirectory)/TFSecReport/TFSec-Report.xml --no-colour
+#                docker run --rm -v $(agent.builddirectory):/src aquasec/tfsec ./src --verbose --no-colour
+         - task: TerraformTaskV3@3
+           displayName: tfvalidate
+           inputs:
+              provider: 'azurerm'
+              command: 'validate'
+         - task: CmdLine@2
+           inputs:
+              script: |
+                echo  '$(agent.builddirectory)'
+                echo  '$(build.BinariesDirectory)'
+                echo '$(Build.ArtifactStagingDirectory)'
+                echo '$(Build.SourcesDirectory)'
+                dir
+         - task: TerraformTaskV3@3
+           displayName: plan
+           inputs:
+              provider: 'azurerm'
+              command: 'plan'
+              environmentServiceNameAzureRM: 'terraform-connection'
+              workingDirectory: '.'
+              commandOptions: '-input=false -var-file=demo.tfvars'
+
+         - task: TerraformTaskV3@3
+           displayName: apply
+           inputs:
+              provider: 'azurerm'
+              command: 'apply'
+              environmentServiceNameAzureRM: 'terraform-connection'
+              commandOptions: '-var-file=demo.tfvars -auto-approve'
+              workingDirectory: '.'
+
+         - task: Docker@2
+           displayName: Build and push an image to container registry
+           inputs:
+                  command: buildAndPush
+                  repository: "titanicapi"
+                  dockerfile: "Dockerfile"
+                  containerRegistry: "docker-connection"
+                  tags: |
+                    1537
+
+         - task: Docker@2
+           displayName: Build and push an image to container registry
+           inputs:
+                  command: buildAndPush
+                  repository: "postgres"
+                  dockerfile: "DockerfilePostgres"
+                  containerRegistry: "docker-connection"
+                  tags: |
+                    1537
+
+        # - task: AzureCLI@2
+        #   displayName: 'Az CLI script: InlineScript'
+        #   inputs:
+        #      azureSubscription: "terraform-connection"
+        #      ScriptType: bash
+        #      scriptLocation: inlineScript
+        #     inlineScript: |
+        #        az acr import --name titanicacr --resource-group Hub-RG --source docker.io/library/postgres:14.1-alpine
+
+         - task: KubernetesManifest@0
+           displayName: Create Postgres secret
+           inputs:
+              kubernetesServiceConnection: 'kubernetes-connection'
+              action: createSecret
+              secretType: 'generic'
+              secretName: "dbsecret"
+              secretArguments: 
+                --from-literal=POSTGRES_PASSWORD=$(dbpass)
+              namespace: "default"
+              dockerRegistryEndpoint: "docker-connection"
+
+         - task: KubernetesManifest@0
+           displayName: Create imagePullSecret
+           inputs:
+              kubernetesServiceConnection: 'kubernetes-connection'
+              action: createSecret
+              secretName: "mysecret"
+              namespace: "default"
+              dockerRegistryEndpoint: "docker-connection"
+
+         - task: KubernetesManifest@0
+           displayName: Deploy to Kubernetes cluster
+           inputs:
+              kubernetesServiceConnection: 'kubernetes-connection'
+              action: deploy
+              namespace: "default"
+              manifests: |
+                ./deployment.yml
+              imagePullSecrets: |
+                "mysecret"

@@ -1,0 +1,8 @@
+FROM postgres:14.1-alpine
+
+ADD ./db/titanic.csv /tmp/
+
+ADD ./db/init.sql /docker-entrypoint-initdb.d/
+
+RUN cat /docker-entrypoint-initdb.d/init.sql
+

@@ -1,0 +1,90 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: titanicacr.azurecr.io/postgres:1537
+        env:
+          - name: POSTGRES_USER
+            value: postgres
+          - name: POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: dbsecret
+                key: POSTGRES_PASSWORD
+          - name: PWD
+            valueFrom:
+              secretKeyRef:
+                name: dbsecret
+                key: POSTGRES_PASSWORD               
+        ports:
+        - containerPort: 5432
+          name: postgres
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector:
+    app: postgres
+  ports:
+  - port: 5432
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: titanicapi
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: titanicapi
+  template:
+    metadata:
+      labels:
+        app: titanicapi
+    spec:
+      containers:
+      - name: titanicapi
+        image: titanicacr.azurecr.io/titanicapi:1537
+        env:
+          - name: DB_USER
+            value: postgres
+          - name: DB_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: dbsecret
+                key: POSTGRES_PASSWORD
+          - name: DB_PORT
+            value: "5432"    
+          - name: DB_NAME
+            value: people
+          - name: DATABASE_URL
+            value: "postgresql://postgres:$(DB_PASSWORD)@postgres:5432/postgres"  
+        ports:
+        - containerPort: 5000
+          name: postgres
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: titanicapi
+spec:
+  type: LoadBalancer
+  selector:
+    app: titanicapi
+  ports:
+  - port: 5000
